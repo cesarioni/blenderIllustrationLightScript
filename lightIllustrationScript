@@ -1,0 +1,347 @@
+import bpy
+import os
+import pathlib
+import pprint
+C = bpy.context
+###INSTRUCTIONS:
+#1.Create a volume material with the name of volume
+#2.Put all the lights and cameras in one separate collection
+#(if you click the delete collection button this collection will also be removed)
+#The script will create a default view layer to render all the scene
+
+#####################FUNCTIONS
+####################Create collections functions
+
+def validateobject(fobject): 
+    if fobject.type not in ('LIGHTS', 'CAMERA', 'VOLUME'):
+        # Check if object has at least one material
+        if 1<= len(fobject.material_slots): 
+            # Iterate through all material in the objects
+            for slot in fobject.material_slots:
+                if slot.material is not None:
+                    return slot.material.name
+                else:
+                    print ("object do not has a material")
+                    return False
+        else:
+            print ("object do not has a material")
+            return False
+    else:
+        print ("Object is a camera, or light or volume")
+        return False
+            
+def checkIfCollectionExists(fmatName):
+    # Iterate through all collections
+    for collection in bpy.data.collections:
+        if fmatName == collection.name:
+            print("collection already exists")
+            return True
+    return False
+
+def createCollection(collectionName): 
+    bpy.ops.collection.create(name  = collectionName)
+    bpy.context.scene.collection.children.link(bpy.data.collections[collectionName])
+    
+def removeObjFromCollections(obj):
+    # Iterate through the collection that includes obj
+    for collection in obj.users_collection:
+        collection.objects.unlink(obj)
+
+    
+def addObjToCollection(colName,objName):
+    bpy.data.collections[colName].objects.link(objName)
+    
+def deleteEmptyCollections():
+    # Iterate through all collections
+    for collection in bpy.data.collections:
+        if len(collection.all_objects) == 0:
+             bpy.data.collections.remove(collection)
+             
+             
+def create_Collections():
+    objects = bpy.context.scene.objects
+    # Iterate through all objects in selection
+    #for obj in C.selected_objects:
+    for obj in objects:
+    #for obj in objects:
+        bpy.ops.object.select_all(action='DESELECT')#deselect objects to avoid unexpected objects in wrong collection
+        collectionName = validateobject(obj)
+        if collectionName == False: continue
+        if checkIfCollectionExists(collectionName) == False:
+            print ("Collection does not exist creating a new one")
+            createCollection(collectionName)
+        removeObjFromCollections(obj)
+        try:
+            addObjToCollection(collectionName,obj)
+        except RuntimeError:
+            print ("object already in collection")
+            pass
+
+    deleteEmptyCollections()#avoid unused collections
+
+def delete_Collections():
+    objects =  bpy.data.objects
+    for obj in objects:
+        print (obj.name)
+        if obj.type not in ('LIGHTS', 'CAMERA', 'VOLUME', 'LIGHT'):
+            #removeObjFromCollections(obj)
+            #addObjToCollection('Scene',obj)
+            bpy.ops.object.move_to_collection(collection_index=0)
+    deleteEmptyCollections()#avoid unused collections
+             
+####################Create view functions
+
+def CheckIfViewLayerExists(viewLayerName):
+    for layer in bpy.context.scene.view_layers:
+            if layer.name == viewLayerName:
+                #bpy.context.scene.view_layers.remove(layer)
+                print("view layer already exists")
+                return True
+    return False
+
+def CreateViewLayers():
+    #createLightgroups()
+    # Iterate through all collections
+    if CheckIfViewLayerExists("Default") == False: 
+        print("it doesnt exists")
+        bpy.context.scene.view_layers.new("Default")
+    for collection in bpy.data.collections:
+        if CheckIfViewLayerExists(collection.name) == False:
+            newViewLayer = bpy.context.scene.view_layers.new(collection.name)
+            newViewLayer.use_pass_diffuse_direct = True
+            newViewLayer.use_pass_diffuse_indirect = True
+            newViewLayer.use_pass_diffuse_color = True
+            newViewLayer.use_pass_glossy_direct = True
+            newViewLayer.use_pass_glossy_indirect = True
+            newViewLayer.view_layer_add_lightgroup("decwe")
+            
+def SetViewLayersVisibility():
+    # Iterate through all view layers
+    for viewLayer in bpy.context.scene.view_layers:
+        #Iterate over the collections on each view layer as pointer with layer_collection
+        for layer_collection in viewLayer.layer_collection.children:
+            #NAME ONE VIEW LAYER DEFAULT AND IT WILL RENDER EVERYTHING.
+            if layer_collection.name == viewLayer.name or viewLayer.name == "Default":
+                layer_collection.indirect_only= False
+                layer_collection.holdout= False
+            elif viewLayer.name == "Volume":
+                if layer_collection.name != viewLayer.name : layer_collection.holdout= True
+            else:
+                layer_collection.indirect_only= True
+                layer_collection.holdout= False    
+                
+                
+def DeleteAllViewLayers():
+    for layer in bpy.context.scene.view_layers:
+        if layer.name != 'Default':
+            bpy.context.scene.view_layers.remove(layer)  
+            
+def createLightgroups():
+    objects = bpy.context.scene.objects
+    bpy.ops.scene.view_layer_remove_unused_lightgroups()
+    for obj in objects:
+        bpy.ops.object.select_all(action='DESELECT')#deselect objects to avoid unexpected objects in wrong collection
+        if obj.type=='LIGHT':
+            #print(bpy.context.scene.view_layer_lightgroups)
+            bpy.ops.scene.view_layer_add_lightgroup(name=obj.name)
+            print(obj.name)
+                 
+####################Setup Render
+
+def remove_compositor_nodes():
+    bpy.context.scene.node_tree.nodes.clear()
+    
+    
+def setupRender():
+    remove_compositor_nodes()
+    scene = bpy.context.scene
+    scene.use_nodes = True
+    counter=0
+    offset = 600
+    for viewLayer in bpy.context.scene.view_layers:
+        #compositor_node_tree = scene.node_tree
+        image_node = scene.node_tree.nodes.new(type="CompositorNodeRLayers")
+        image_node.layer= viewLayer.name
+        image_node.location.y=offset*counter
+        
+        mixA = createMixNode('ADD', 300, (offset*counter)+50)
+     
+        mixB = createMixNode('ADD', 300, (offset*counter)-150)
+        
+        FileBaseName = getFileBaseName()
+
+        render_output_light = createOutputs(FileBaseName + "_" +viewLayer.name, "light",  1000, offset*counter)
+        
+        render_output_diff = createOutputs(FileBaseName + "_" + viewLayer.name, "diff", 1000, (offset*counter)-150)
+        
+        render_output_spec = createOutputs(FileBaseName +  "_" +viewLayer.name, "spec",  1000, (offset*counter)-300)
+        
+        render_output_alpha = createOutputs(FileBaseName + "_" + viewLayer.name, "alpha",  1000, (offset*counter)+150)
+        
+        setAlphaNode_light = createSetAlphaNode( 700, (offset*counter)-0)
+        setAlphaNode_diff = createSetAlphaNode( 700, (offset*counter)-150)
+        setAlphaNode_spec = createSetAlphaNode( 700, (offset*counter)-300)
+        
+        scene.node_tree.links.new(mixA.outputs[0], setAlphaNode_light.inputs[0])
+        scene.node_tree.links.new(image_node.outputs["Alpha"], setAlphaNode_light.inputs[1])
+        
+        scene.node_tree.links.new(image_node.outputs["DiffCol"], setAlphaNode_diff.inputs[0])
+        scene.node_tree.links.new(image_node.outputs["Alpha"], setAlphaNode_diff.inputs[1])
+        
+        scene.node_tree.links.new(mixB.outputs[0], setAlphaNode_spec.inputs[0])
+        scene.node_tree.links.new(image_node.outputs["Alpha"], setAlphaNode_spec.inputs[1])
+         
+        scene.node_tree.links.new(image_node.outputs["Alpha"], render_output_alpha.inputs[1])
+        
+        scene.node_tree.links.new(image_node.outputs["DiffDir"], mixA.inputs[1])
+        scene.node_tree.links.new(image_node.outputs["DiffInd"], mixA.inputs[2])
+        
+        scene.node_tree.links.new(image_node.outputs["GlossDir"], mixB.inputs[1])
+        scene.node_tree.links.new(image_node.outputs["GlossInd"], mixB.inputs[2])
+        
+        scene.node_tree.links.new(setAlphaNode_light.outputs[0], render_output_light.inputs[1])
+        
+        scene.node_tree.links.new(setAlphaNode_diff.outputs[0], render_output_diff.inputs[1])
+        
+        scene.node_tree.links.new(setAlphaNode_spec.outputs[0], render_output_spec.inputs[1])
+        
+        counter+=1
+    
+    for allObject in bpy.context.scene.objects:
+        if allObject.type in ('LIGHTS'):
+            print(allObject)
+    if(True):
+        pass
+        #color_node = scene.node_tree.nodes.new(type="CompositorNodeRGB")
+        
+def createMixNode(blendType, xPos, yPos):
+    mixNode = bpy.context.scene.node_tree.nodes.new(type="CompositorNodeMixRGB")
+    mixNode.blend_type= blendType
+    positionNodes(mixNode, xPos, yPos)
+    return mixNode
+
+
+def createOutputs(nameFile, prefix, xPos, yPos):
+    render_output = bpy.context.scene.node_tree.nodes.new(type="CompositorNodeOutputFile")
+    filepath = bpy.data.filepath
+    subPath = os.path.join(os.path.dirname(filepath), getFileBaseName())
+    render_output.base_path=subPath
+    render_output.format.file_format='PNG'
+    render_output.format.color_depth='8'
+    fullName= nameFile+"_"+prefix
+    render_output.file_slots.new(fullName)
+    render_output.format.color_management = 'OVERRIDE'
+    render_output.format.view_settings.view_transform='Standard'
+    positionNodes(render_output, xPos, yPos)
+    return render_output
+
+def getFileBaseName():
+    fileName = bpy.path.basename(bpy.context.blend_data.filepath)
+    fileName = fileName.split(".")
+    baseName = fileName[0]
+    baseName = baseName.split("_")
+    return baseName[0]
+    
+def createSetAlphaNode(xPos, yPos):
+    setAlphaNode = bpy.context.scene.node_tree.nodes.new(type="CompositorNodeSetAlpha")
+    setAlphaNode.mode = 'REPLACE_ALPHA'
+    positionNodes(setAlphaNode, xPos, yPos)
+    return setAlphaNode
+
+def positionNodes(myNode, xPos, yPos):
+    myNode.location.x = xPos
+    myNode.location.y = yPos
+        
+            
+##############################OPERATIONS
+
+class OP_create_collection(bpy.types.Operator):
+    bl_idname = "myop.create_collection"
+    bl_label = "Create collections"
+
+    def execute(self, context):
+        create_Collections()
+        return {'FINISHED'}
+    
+class OP_create_view_layer(bpy.types.Operator):
+    bl_idname = "myop.create_view_layer"
+    bl_label = "Create view layers"
+
+    def execute(self, context):
+        CreateViewLayers()
+        SetViewLayersVisibility() 
+        return {'FINISHED'}
+    
+class OP_reset_collection(bpy.types.Operator):
+    bl_idname = "myop.reset_collections"
+    bl_label = "Delete collections"
+
+    def execute(self, context):
+        delete_Collections()
+        return {'FINISHED'}
+    
+class OP_reset_view_layer(bpy.types.Operator):
+    bl_idname = "myop.reset_view_layers"
+    bl_label = "Delete view layers"
+
+    def execute(self, context):
+        DeleteAllViewLayers() 
+        return {'FINISHED'}
+    
+class OP_setup_render(bpy.types.Operator):
+    bl_idname = "myop.setup_render"
+    bl_label = "Setup Render"
+
+    def execute(self, context):
+        setupRender() 
+        return {'FINISHED'}    
+    
+
+#############################UI
+
+class illustration_aid_panel(bpy.types.Panel):
+    """Creates a Panel in the scene context for dividing the render scene"""
+    bl_label = "Illustration aid"
+    bl_idname = "Illustration_Aid"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "IA"
+    
+    def draw(self, context):
+        layout = self.layout
+        row = layout.row()
+        ##row.operator("render.render")
+        row.operator("myop.create_collection")
+        row = layout.row()
+        row.operator("myop.create_view_layer")
+        row = layout.row()
+        row.operator("myop.reset_collections")
+        row = layout.row()
+        row.operator("myop.reset_view_layers")
+        row = layout.row()
+        row.operator("myop.setup_render")
+
+         
+#############################REGISTRATIONS
+
+def register():
+    bpy.utils.register_class(OP_create_collection)
+    bpy.utils.register_class(OP_create_view_layer)
+    bpy.utils.register_class(illustration_aid_panel)
+    bpy.utils.register_class(OP_reset_collection)
+    bpy.utils.register_class(OP_reset_view_layer)
+    bpy.utils.register_class(OP_setup_render)
+
+
+def unregister():
+    bpy.utils.unregister_class(OP_create_collection)
+    bpy.utils.unregister_class(OP_create_view_layer)
+    bpy.utils.unregister_class(illustration_aid_panel)
+    bpy.utils.unregister_class(OP_reset_collection)
+    bpy.utils.unregister_class(OP_reset_view_layer)
+    bpy.utils.unregister_class(OP_setup_render)
+    
+if __name__ == "__main__":
+    register()
+
+##unregister()
