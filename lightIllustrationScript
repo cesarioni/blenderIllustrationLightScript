@@ -113,7 +113,7 @@ def CreateViewLayers():
             newViewLayer.use_pass_diffuse_color = True
             newViewLayer.use_pass_glossy_direct = True
             newViewLayer.use_pass_glossy_indirect = True
-            newViewLayer.view_layer_add_lightgroup("decwe")
+            #ERROR HERE newViewLayer.view_layer_add_lightgroup("decwe")
             
 def SetViewLayersVisibility():
     # Iterate through all view layers
