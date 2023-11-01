@@ -153,9 +153,9 @@ def remove_compositor_nodes():
     
     
 def setupRender():
-    remove_compositor_nodes()
     scene = bpy.context.scene
     scene.use_nodes = True
+    remove_compositor_nodes()
     counter=0
     offset = 600
     for viewLayer in bpy.context.scene.view_layers:
