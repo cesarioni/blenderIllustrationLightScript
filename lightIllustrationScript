@@ -113,7 +113,7 @@ def CreateViewLayers():
             newViewLayer.use_pass_diffuse_color = True
             newViewLayer.use_pass_glossy_direct = True
             newViewLayer.use_pass_glossy_indirect = True
-            #ERROR HERE newViewLayer.view_layer_add_lightgroup("decwe")
+            #newViewLayer.view_layer_add_lightgroup("decwe")
             
 def SetViewLayersVisibility():
     # Iterate through all view layers
@@ -128,7 +128,7 @@ def SetViewLayersVisibility():
                 if layer_collection.name != viewLayer.name : layer_collection.holdout= True
             else:
                 layer_collection.indirect_only= True
-                layer_collection.holdout= False    
+                layer_collection.holdout= True    
                 
                 
 def DeleteAllViewLayers():
@@ -153,9 +153,9 @@ def remove_compositor_nodes():
     
     
 def setupRender():
+    remove_compositor_nodes()
     scene = bpy.context.scene
     scene.use_nodes = True
-    remove_compositor_nodes()
     counter=0
     offset = 600
     for viewLayer in bpy.context.scene.view_layers:
@@ -164,47 +164,68 @@ def setupRender():
         image_node.layer= viewLayer.name
         image_node.location.y=offset*counter
         
-        mixA = createMixNode('ADD', 300, (offset*counter)+50)
-     
-        mixB = createMixNode('ADD', 300, (offset*counter)-150)
-        
         FileBaseName = getFileBaseName()
-
-        render_output_light = createOutputs(FileBaseName + "_" +viewLayer.name, "light",  1000, offset*counter)
-        
+    
+        #################
+        #DIFFUSE SETUP######
         render_output_diff = createOutputs(FileBaseName + "_" + viewLayer.name, "diff", 1000, (offset*counter)-150)
-        
-        render_output_spec = createOutputs(FileBaseName +  "_" +viewLayer.name, "spec",  1000, (offset*counter)-300)
-        
-        render_output_alpha = createOutputs(FileBaseName + "_" + viewLayer.name, "alpha",  1000, (offset*counter)+150)
-        
-        setAlphaNode_light = createSetAlphaNode( 700, (offset*counter)-0)
         setAlphaNode_diff = createSetAlphaNode( 700, (offset*counter)-150)
-        setAlphaNode_spec = createSetAlphaNode( 700, (offset*counter)-300)
         
-        scene.node_tree.links.new(mixA.outputs[0], setAlphaNode_light.inputs[0])
-        scene.node_tree.links.new(image_node.outputs["Alpha"], setAlphaNode_light.inputs[1])
-        
+        #copy alpha to diffuse
         scene.node_tree.links.new(image_node.outputs["DiffCol"], setAlphaNode_diff.inputs[0])
         scene.node_tree.links.new(image_node.outputs["Alpha"], setAlphaNode_diff.inputs[1])
         
-        scene.node_tree.links.new(mixB.outputs[0], setAlphaNode_spec.inputs[0])
-        scene.node_tree.links.new(image_node.outputs["Alpha"], setAlphaNode_spec.inputs[1])
-         
-        scene.node_tree.links.new(image_node.outputs["Alpha"], render_output_alpha.inputs[1])
+        #connect final diff with the output
+        scene.node_tree.links.new(setAlphaNode_diff.outputs[0], render_output_diff.inputs[1])
         
+        
+        #################
+        #LIGHT SETUP######
+        render_output_light = createOutputs(FileBaseName + "_" +viewLayer.name, "light",  1000, offset*counter)
+        mixA = createMixNode('ADD', 300, (offset*counter)+50)
+        setAlphaNode_light = createSetAlphaNode( 700, (offset*counter)-0)
+        
+        #combine light direct and indirect
         scene.node_tree.links.new(image_node.outputs["DiffDir"], mixA.inputs[1])
         scene.node_tree.links.new(image_node.outputs["DiffInd"], mixA.inputs[2])
         
+        #copy alpha to light
+        scene.node_tree.links.new(mixA.outputs[0], setAlphaNode_light.inputs[0])
+        scene.node_tree.links.new(image_node.outputs["Alpha"], setAlphaNode_light.inputs[1])
+        
+        #connect final light with the output
+        scene.node_tree.links.new(setAlphaNode_light.outputs[0], render_output_light.inputs[1])
+        
+        #################
+        #SPEC SETUP######
+
+        render_output_spec = createOutputs(FileBaseName +  "_" +viewLayer.name, "spec",  1000, (offset*counter)-300)
+        mixB = createMixNode('ADD', 300, (offset*counter)-150)
+        mixC = createMixNode('MULTIPLY', 500, (offset*counter)-150)
+        setAlphaNode_spec = createSetAlphaNode( 700, (offset*counter)-300)
+        
+        #combine glossy direct and indirect
         scene.node_tree.links.new(image_node.outputs["GlossDir"], mixB.inputs[1])
         scene.node_tree.links.new(image_node.outputs["GlossInd"], mixB.inputs[2])
         
-        scene.node_tree.links.new(setAlphaNode_light.outputs[0], render_output_light.inputs[1])
+        #multiply de glossies with the glossy filter
+        scene.node_tree.links.new( mixB.outputs[0], mixC.inputs[1])
+        scene.node_tree.links.new(image_node.outputs["GlossCol"], mixC.inputs[2])
         
-        scene.node_tree.links.new(setAlphaNode_diff.outputs[0], render_output_diff.inputs[1])
+        #copy alpha to glossy
+        scene.node_tree.links.new(mixC.outputs[0], setAlphaNode_spec.inputs[0])
+        scene.node_tree.links.new(image_node.outputs["Alpha"], setAlphaNode_spec.inputs[1])
         
+        #connect final glossy with the output
         scene.node_tree.links.new(setAlphaNode_spec.outputs[0], render_output_spec.inputs[1])
         
+        #################
+        #ALPHA SETUP######
+        #COMMENTED LINE BELOW THIS CREATES OUTPUT FOR ALPHA
+        #render_output_alpha = createOutputs(FileBaseName + "_" + viewLayer.name, "alpha",  1000, (offset*counter)+150)
+        #COMMENTED LINE BELOW THIS CREATES LINKS FOR OUTPUT FOR ALPHA
+        #scene.node_tree.links.new(image_node.outputs["Alpha"], render_output_alpha.inputs[1])
+ 
         counter+=1
     
     for allObject in bpy.context.scene.objects:
